@@ -82,7 +82,7 @@ def extract_chunks(text, keyword):
     return match.group(1) if match else None
 
 def format_location(loc):
-    조, 항, 호, 목, _ = loc
+    조, 항, 호, 목 = loc  # ✅ 네 개만 받도록 수정
     parts = [조]
     if 항:
         parts.append(f"제{항}항")
@@ -91,6 +91,7 @@ def format_location(loc):
     if 목:
         parts.append(f"{목}목")
     return "".join(parts)
+
 
 # 아래에 run_search_logic과 run_amendment_logic 삽입
 
