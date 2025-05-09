@@ -189,8 +189,9 @@ def extract_chunk_and_josa(token, searchword):
     pattern = re.compile(rf'({re.escape(searchword)})(?:{"|".join(suffix_list)})?$')
     m = pattern.search(token)
     if m:
-        return m.group(1), m.group(2)
+        return m.group(1), m.group(2) if m.lastindex == 2 else None
     return token, None
+
 
 def group_locations(loc_list):
     grouped = defaultdict(list)
