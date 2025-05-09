@@ -82,16 +82,14 @@ def extract_chunks(text, keyword):
     return match.group(1) if match else None
 
 def format_location(loc):
-    조, 항, 호, 목 = loc  # ✅ 네 개만 받도록 수정
-    parts = [조]
-    if 항:
-        parts.append(f"제{항}항")
-    if 호:
-        parts.append(f"제{호}호")
-    if 목:
-        parts.append(f"{목}목")
+    padded = loc + (None,) * (5 - len(loc))
+    조, 항, 호, 목, _ = padded[:5]
+    parts = []
+    if 조: parts.append(f"{조}")
+    if 항: parts.append(f"{항}항")
+    if 호: parts.append(f"{호}호")
+    if 목: parts.append(f"{목}목")
     return "".join(parts)
-
 
 # 아래에 run_search_logic과 run_amendment_logic 삽입
 
@@ -179,66 +177,81 @@ from collections import defaultdict
 import re
 
 def get_jongseong_type(word):
-    """받침 유무 및 ㄹ 여부 반환"""
     last_char = word[-1]
     code = ord(last_char)
     if not (0xAC00 <= code <= 0xD7A3):
-        return False, False
+        return (False, False)
     jong = (code - 0xAC00) % 28
     return jong != 0, jong == 8
 
-def extract_josa(word):
-    """단어에서 조사 추출"""
-    josa_list = ["으로", "이나", "과", "와", "을", "를", "이", "가", "나", "로", "은", "는"]
-    for josa in josa_list:
-        if word.endswith(josa):
-            return josa
-    return ""
+def extract_chunk_and_josa(token, searchword):
+    suffix_list = ["으로", "이나", "과", "와", "을", "를", "이", "가", "나", "로", "은", "는"]
+    pattern = re.compile(rf'({re.escape(searchword)})(?:{"|".join(suffix_list)})?$')
+    m = pattern.search(token)
+    if m:
+        return m.group(1), m.group(2)
+    return token, None
 
-def apply_josa_rule(find_word, replace_word):
-    """조사규칙에 따라 치환 표현 반환"""
-    josa = extract_josa(find_word)
-    root = find_word[:-len(josa)] if josa else find_word
-    b_has_jong, b_has_rieul = get_jongseong_type(replace_word)
-    a_has_jong, _ = get_jongseong_type(root)
+def group_locations(loc_list):
+    grouped = defaultdict(list)
+    for loc in loc_list:
+        m = re.match(r'(제\d+조)(.*)', loc)
+        if m:
+            grouped[m.group(1)].append(m.group(2))
+        else:
+            grouped[loc].append('')
+    result = []
+    for 조, 항목들 in grouped.items():
+        항목들 = [a for a in 항목들 if a]
+        if 항목들:
+            result.append(조 + 'ㆍ'.join(항목들))
+        else:
+            result.append(조)
+    return ' 및 '.join(result) if len(result) > 1 else result[0]
+
+def apply_josa_rule(a, b, josa=None):
+    b_has_batchim, b_has_rieul = get_jongseong_type(b)
+    a_has_batchim, _ = get_jongseong_type(a)
 
     if not josa:
-        if not a_has_jong:
-            return f'"{find_word}"를 "{replace_word}"{"로" if not b_has_jong or b_has_rieul else "으로"} 한다.'
+        if not a_has_batchim:
+            if not b_has_batchim or b_has_rieul:
+                return f'"{a}"를 "{b}"로 한다.'
+            else:
+                return f'"{a}"를 "{b}"으로 한다.'
         else:
-            return f'"{find_word}"을 "{replace_word}"{"로" if not b_has_jong or b_has_rieul else "으로"} 한다.'
+            if not b_has_batchim or b_has_rieul:
+                return f'"{a}"을 "{b}"로 한다.'
+            else:
+                return f'"{a}"을 "{b}"으로 한다.'
 
-    rule_map = {
-        "을": lambda: f'"{root}"을 "{replace_word}"{"로" if b_has_rieul else "으로" if b_has_jong else "를"} 한다.',
-        "를": lambda: f'"{root}"를 "{replace_word}"{"을" if b_has_jong else ""}로 한다.',
-        "과": lambda: f'"{root}"과 "{replace_word}"{"로" if b_has_rieul else "으로" if b_has_jong else "와"} 한다.',
-        "와": lambda: f'"{root}"와 "{replace_word}"{"과" if b_has_jong else ""}로 한다.',
-        "이": lambda: f'"{root}"이 "{replace_word}"{"로" if b_has_rieul else "으로" if b_has_jong else "가"} 한다.',
-        "가": lambda: f'"{root}"가 "{replace_word}"{"이" if b_has_jong else ""}로 한다.',
-        "이나": lambda: f'"{root}"이나 "{replace_word}"{"로" if b_has_rieul else "으로" if b_has_jong else "나"} 한다.',
-        "나": lambda: f'"{root}"나 "{replace_word}"{"이나" if b_has_jong else ""}로 한다.',
-        "으로": lambda: f'"{root}"으로 "{replace_word}"{"로" if b_has_rieul or not b_has_jong else "으로"} 한다.',
-        "로": lambda: f'"{root}"로 "{replace_word}"{"로" if not b_has_jong or b_has_rieul else "으로"} 한다.',
-        "는": lambda: f'"{root}"는 "{replace_word}"{"은" if b_has_jong else ""}로 한다.',
-        "은": lambda: f'"{root}"은 "{replace_word}"{"로" if b_has_rieul else "으로" if b_has_jong else "는"}로 한다.',
-    }
-
-    return rule_map.get(josa, lambda: f'"{find_word}"를 "{replace_word}"로 한다.')()
-
-def format_location(loc):
-    """조, 항, 호, 목 문자열 조립"""
-    조, 항, 호, 목 = loc
-    parts = [조]
-    if 항:
-        parts.append(f"제{항}항")
-    if 호:
-        parts.append(f"제{호}호")
-    if 목:
-        parts.append(f"{목}목")
-    return "".join(parts)
+    if josa == "을":
+        return f'"{a}"을 "{b}"{"로" if b_has_rieul else "으로" if b_has_batchim else "를"} 한다.'
+    if josa == "를":
+        return f'"{a}"를 "{b}"{"을" if b_has_batchim else "로"} 한다.'
+    if josa == "과":
+        return f'"{a}"과 "{b}"{"과" if b_has_batchim else "와"} 한다.'
+    if josa == "와":
+        return f'"{a}"와 "{b}"{"과" if b_has_batchim else "와"} 한다.'
+    if josa == "이":
+        return f'"{a}"이 "{b}"{"로" if b_has_rieul else "으로" if b_has_batchim else "가"} 한다.'
+    if josa == "가":
+        return f'"{a}"가 "{b}"{"이" if b_has_batchim else ""} 한다.'
+    if josa == "이나":
+        return f'"{a}"이나 "{b}"{"이나" if b_has_batchim else "나"} 한다.'
+    if josa == "나":
+        return f'"{a}"나 "{b}"{"이나" if b_has_batchim else ""} 한다.'
+    if josa == "으로":
+        return f'"{a}"으로 "{b}"{"로" if b_has_rieul or not b_has_batchim else "으로"} 한다.'
+    if josa == "로":
+        return f'"{a}"로 "{b}"{"으로" if b_has_batchim and not b_has_rieul else ""} 한다.'
+    if josa == "는":
+        return f'"{a}"는 "{b}"{"은" if b_has_batchim else ""} 한다.'
+    if josa == "은":
+        return f'"{a}"은 "{b}"{"은" if b_has_batchim else "는"} 한다.'
+    return f'"{a}"를 "{b}"로 한다.'
 
 def run_amendment_logic(find_word, replace_word):
-    """개정문 생성 - 규칙 기반, 조사형 묶음 출력"""
     amendment_results = []
     for idx, law in enumerate(get_law_list_from_api(find_word)):
         law_name = law["법령명"]
@@ -249,49 +262,32 @@ def run_amendment_logic(find_word, replace_word):
 
         tree = ET.fromstring(xml_data)
         articles = tree.findall(".//조문단위")
-
-        # 위치별 조사형 그룹화
-        grouped = defaultdict(list)
+        chunk_map = defaultdict(list)
 
         for article in articles:
             조번호 = article.findtext("조문번호", "").strip()
-            조가지번호 = article.findtext("조문가지번호", "").strip()
+            조가지번호 = article.findtext("조가지번호", "").strip()
             조문식별자 = make_article_number(조번호, 조가지번호)
             조문내용 = article.findtext("조문내용", "") or ""
-            if find_word in 조문내용:
-                key = apply_josa_rule(find_word, replace_word)
-                grouped[key].append((조문식별자, None, None, None))
 
-            for 항 in article.findall("항"):
-                항번호 = normalize_number(항.findtext("항번호", "").strip())
-                항내용 = 항.findtext("항내용", "") or ""
-                if find_word in 항내용:
-                    key = apply_josa_rule(find_word, replace_word)
-                    grouped[key].append((조문식별자, 항번호, None, None))
+            tokens = re.findall(r'[가-힣A-Za-z0-9]+', 조문내용)
+            for token in tokens:
+                if find_word in token:
+                    chunk, josa = extract_chunk_and_josa(token, find_word)
+                    바꿀덩어리 = chunk.replace(find_word, replace_word)
+                    loc_str = f"{조문식별자}"
+                    chunk_map[(chunk, 바꿀덩어리, josa)].append(loc_str)
 
-                for 호 in 항.findall("호"):
-                    호번호 = 호.findtext("호번호", "").strip().replace(".", "")
-                    호내용 = 호.findtext("호내용", "") or ""
-                    if find_word in 호내용:
-                        key = apply_josa_rule(find_word, replace_word)
-                        grouped[key].append((조문식별자, 항번호, 호번호, None))
+        if not chunk_map:
+            continue
 
-                    for 목 in 호.findall("목"):
-                        목번호 = 목.findtext("목번호", "").strip().replace(".", "")
-                        for m in 목.findall("목내용"):
-                            if m.text and find_word in m.text:
-                                key = apply_josa_rule(find_word, replace_word)
-                                grouped[key].append((조문식별자, 항번호, 호번호, 목번호))
-
-        # 문장 조립
         문장들 = []
-        for key, locs in grouped.items():
-            locs_sorted = sorted(set(locs))  # 중복 제거
-            loc_str = ", ".join([format_location(l) for l in locs_sorted[:-1]]) + (" 및 " if len(locs_sorted) > 1 else "") + format_location(locs_sorted[-1])
-            문장들.append(f'{loc_str} 중 {key}')
+        for (chunk, 바꿀덩어리, josa), locs in chunk_map.items():
+            각각 = "각각 " if len(locs) > 1 else ""
+            locs_str = group_locations(locs)
+            문장들.append(f'{locs_str} 중 {apply_josa_rule(chunk, 바꿀덩어리, josa)}')
 
-        if 문장들:
-            prefix = chr(9312 + idx) if idx < 20 else str(idx + 1)
-            amendment_results.append(f"{prefix} {law_name} 일부를 다음과 같이 개정한다.<br>" + "<br>".join(문장들))
+        prefix = chr(9312 + idx) if idx < 20 else str(idx + 1)
+        amendment_results.append(f"{prefix} {law_name} 일부를 다음과 같이 개정한다.<br>" + "<br>".join(문장들))
 
     return amendment_results if amendment_results else ["⚠️ 개정 대상 조문이 없습니다."]
